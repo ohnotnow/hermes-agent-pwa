@@ -103,3 +103,28 @@ def get_thread(conn: sqlite3.Connection, conversation_id: str) -> list[dict]:
         (conversation_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_agents(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, display_name, created_at, last_seen_at FROM agents ORDER BY id"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_conversations(conn: sqlite3.Connection) -> list[dict]:
+    """Conversations with a last-message preview, newest activity first."""
+    rows = conn.execute(
+        """SELECT c.id, c.agent_id, c.title, c.created_at,
+                  m.body   AS last_body,
+                  m.sender AS last_sender,
+                  m.created_at AS last_at
+           FROM conversations c
+           LEFT JOIN messages m ON m.message_id = (
+               SELECT message_id FROM messages
+               WHERE conversation_id = c.id
+               ORDER BY created_at DESC LIMIT 1
+           )
+           ORDER BY COALESCE(m.created_at, c.created_at) DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]

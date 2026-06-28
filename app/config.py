@@ -17,6 +17,7 @@ class Settings:
     auth_token: str
     host: str
     port: int
+    cookie_secure: bool
 
 
 def _load_token() -> str:
@@ -39,4 +40,7 @@ def load_settings() -> Settings:
         auth_token=_load_token(),
         host=os.getenv("HAP_HOST", "127.0.0.1"),
         port=int(os.getenv("HAP_PORT", "8088")),
+        # Production (behind Caddy/HTTPS) must set HAP_COOKIE_SECURE=true.
+        # Default false so local http dev/testing works.
+        cookie_secure=os.getenv("HAP_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"},
     )
