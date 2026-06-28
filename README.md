@@ -2,6 +2,8 @@
 
 Talk to your local Hermes agents from your phone, like a simple messaging app.
 
+![screenshot](screenshot.png)
+
 hap (Hermes Agent Proxy) is a small, self-hosted gateway for messaging your own
 [Hermes](https://hermes-agent.nousresearch.com/) agents from a phone, tablet or
 browser. You pick an agent, send a message, and the reply turns up in the same
