@@ -118,17 +118,23 @@ in that agent's Hermes home and polling the same gateway.
 
 Hermes keeps extra agents in profiles. Each profile is a parallel home under
 `~/.hermes/profiles/<profile>/`, with its own `plugins/` directory; the default
-agent lives in `~/.hermes/` itself. To add an agent in a profile, run the
-installer again with `--profile`:
+agent lives in `~/.hermes/` itself. **Create the profile in Hermes first**
+(`hermes profile create <profile>`, then set up its agent) — the installer only
+adds hap's plugin to profiles that already exist, and rejects unknown or
+malformed names up front so a typo can't quietly create a dead agent.
+
+Then add the plugin, one profile or several at once:
 
 ```
 ./scripts/install.sh --profile <profile>
+./scripts/install.sh --profiles default,<profile>,<other>   # several in one run
 ```
 
 That drops the plugin into `~/.hermes/profiles/<profile>/plugins/hap/`, writes a
 `hap.json` there with the same token and gateway URL but `agent_id` set to the
 profile name, and enables it with `hermes -p <profile> plugins enable hap`. Add
-`--agent <name>` if you want the id to differ from the profile name.
+`--agent <name>` (single-profile installs only) if you want the id to differ
+from the profile name.
 
 Then restart that profile's Hermes gateway so it loads the plugin (see below).
 The new agent appears in the app's list, and in `/api/agents`, once it starts
@@ -207,11 +213,12 @@ A few things worth knowing:
 - **You do need to restart both pieces.** The installer updates files but starts
   nothing: the hap gateway only picks up new web-app and server code when it
   restarts, and Hermes only loads the new plugin when its gateway restarts.
-- **More than one agent?** Install them all in one run with a comma-separated
-  list — `./scripts/install.sh --profiles default,<name>,…`, where `default` is
-  the default agent. The installer then prints the exact restart command for each
-  agent (e.g. `hermes -p <name> gateway restart`); run those, plus the single
-  `sudo systemctl restart hap-gateway`, which covers every agent at once.
+- **More than one agent?** `./scripts/install.sh --all-profiles` updates every
+  agent that already has hap in one shot — no list to mistype. (Or name them
+  explicitly with `--profiles default,<name>,…`.) Either way the installer prints
+  the exact restart command per agent (e.g. `hermes -p <name> gateway restart`);
+  run those plus the single `sudo systemctl restart hap-gateway`, which covers
+  them all.
 
 Then on your phone, **pull-to-refresh, or close and fully reopen the app**, so it
 fetches the new web app. It caches itself for offline use, so if you still see the
