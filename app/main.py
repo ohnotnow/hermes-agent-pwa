@@ -16,6 +16,7 @@ import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -28,6 +29,8 @@ from app.config import VERSION, load_settings
 from app.events import Broadcaster
 
 AGENT_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+# An agent is "online" if it has polled within this window (it polls ~every 3s).
+ONLINE_WINDOW_SECONDS = 15
 
 settings = load_settings()
 broadcaster = Broadcaster()
@@ -55,10 +58,39 @@ async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/sw.js")
+async def service_worker() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/manifest.json")
+async def manifest() -> FileResponse:
+    return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
+
+
+@app.get("/offline.html")
+async def offline() -> FileResponse:
+    return FileResponse(STATIC_DIR / "offline.html")
+
+
 def valid_agent(agent_id: str) -> str:
     if not AGENT_ID_RE.match(agent_id or ""):
         raise HTTPException(422, "invalid agent id (must match ^[a-z0-9_-]{1,32}$)")
     return agent_id
+
+
+def _agent_online(last_seen_at: str | None) -> bool:
+    if not last_seen_at:
+        return False
+    try:
+        seen = datetime.fromisoformat(last_seen_at)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - seen).total_seconds() <= ONLINE_WINDOW_SECONDS
 
 
 def _publish_message(conversation_id: str, sender: str, body: str, message_id: str) -> None:
@@ -144,7 +176,10 @@ async def me(request: Request) -> dict:
 
 @app.get("/api/agents", dependencies=[Depends(auth.require_session_or_bearer)])
 async def agents(request: Request) -> dict:
-    return {"agents": store.list_agents(request.app.state.db)}
+    items = store.list_agents(request.app.state.db)
+    for a in items:
+        a["online"] = _agent_online(a.get("last_seen_at"))
+    return {"agents": items}
 
 
 @app.get("/api/conversations", dependencies=[Depends(auth.require_session_or_bearer)])
@@ -226,7 +261,14 @@ async def agent_poll(payload: AgentPoll, request: Request) -> dict:
     conn = request.app.state.db
     agent = valid_agent(payload.agent)
     store.ensure_agent(conn, agent, payload.display_name)  # auto-register on first contact
-    return {"messages": store.poll_undelivered(conn, agent)}
+    msgs = store.poll_undelivered(conn, agent)
+    # Let connected browsers tick "delivered" once their messages reach the agent.
+    by_conv: dict[str, list[str]] = {}
+    for m in msgs:
+        by_conv.setdefault(m["conversation_id"], []).append(m["message_id"])
+    for cid, ids in by_conv.items():
+        broadcaster.publish({"type": "delivered", "conversation_id": cid, "message_ids": ids})
+    return {"messages": msgs}
 
 
 @app.post("/api/agent/reply", dependencies=[Depends(auth.require_bearer)])

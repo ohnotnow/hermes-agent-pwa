@@ -6,8 +6,13 @@
   <meta name="theme-color" content="#0b1020">
   <title>hap</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
 </head>
 <body>
+  <div id="conn-banner" class="conn-banner" hidden>⚠ Connection lost — reconnecting…</div>
+
   <!-- Login -->
   <section id="view-login" class="view" hidden>
     <form id="login-form" class="login-card">
@@ -40,6 +45,7 @@
     <header class="topbar">
       <button id="back-btn" class="link">‹ Back</button>
       <span id="convo-title" class="title"></span>
+      <span id="convo-status" class="status"></span>
       <span class="spacer"></span>
     </header>
     <div id="messages" class="messages"></div>
