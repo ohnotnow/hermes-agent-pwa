@@ -76,8 +76,12 @@ set `HAP_AUTH_TOKEN`.
 
 ## Testing
 
-No automated suite yet — there's no safety net. Exercise the real
-gateway→Hermes→browser loop after a change.
+A pytest suite covers the gateway in process — `uv run pytest` (deps are in the
+`dev` group; no new runtime deps). It does **not** cover the adapter or the
+browser, so still exercise the real gateway→Hermes→browser loop after anything
+touching those. See the Testing section of TECHNICAL_OVERVIEW.md for what it
+covers and the two gotchas (import-time config in `conftest.py`; SSE asserted via
+a monkeypatched broadcaster, not the live stream).
 
 ## Where the "why" lives
 

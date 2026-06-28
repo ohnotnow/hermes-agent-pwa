@@ -70,6 +70,7 @@ hermes_plugin/hap/       the Hermes platform adapter (copied into ~/.hermes by i
   adapter.py             HapAdapter: poll loop (inbound) + send/typing (outbound)
   plugin.yaml            Hermes plugin manifest + optional_env prompts
   hap.json.example       config shape (gateway_url, token, agent_id, poll_seconds)
+tests/                   pytest suite over the gateway (conftest + auth/store/events/endpoints)
 serve.py                 ⚠ throwaway stdlib bootstrap — NOT the production gateway (see below)
 scripts/install.sh       the installer (token gen, plugin copy, multi-profile logic)
 systemd/                 hap-gateway.service unit (Linux targets)
@@ -246,9 +247,33 @@ The plugin reads `hap.json` beside `adapter.py` (env vars override): `gateway_ur
 
 ## Testing
 
-No automated test suite yet. Verification to date has been manual end-to-end
-(the working Hermes→gateway→browser loop is recorded in `ant` note `hap-Ed6UZ`).
-Worth knowing before a change: there is no safety net — exercise the real loop.
+A pytest suite (`tests/`) covers the gateway in process — run it with `uv run
+pytest`. It uses FastAPI's `TestClient`; the only test-time deps are `pytest`
+and `httpx` (the `dev` dependency-group — no new *runtime* deps). Layers:
+
+- `test_auth.py` — PIN derivation, signed-cookie sign/verify/expiry, the secret
+  checks, the dependency guards, the same-origin check, the login limiter.
+- `test_store.py` — the SQLite helpers driven against an in-memory connection:
+  upsert, CRUD, the deliver-once poll cursor, `message_id` dedupe, soft-delete /
+  un-hide, deleted-filtering.
+- `test_events.py` — the `Broadcaster` fan-out directly (no HTTP).
+- `test_endpoints.py` — the HTTP surface: login/me/logout + lockout + cross-origin,
+  auth-required 401s, the agent online flag, start/reply/detail, agent poll
+  (deliver-once) and reply (incl. the 409 mismatch), delete + un-hide.
+
+Two things shape the suite and are worth knowing before you touch it:
+
+- **Import-time config.** `auth.py` derives the PIN and the cookie-signing key,
+  and `main.py` captures `db_path`, *at import*. So `tests/conftest.py` pins
+  `HAP_AUTH_TOKEN`/`HAP_DB_PATH` **before** importing any `app.*` module.
+- **No live SSE stream in the tests.** `broadcaster.publish` is monkeypatched to
+  capture events into `client.published`, so endpoint tests assert *which* event
+  fired without consuming the infinite `text/event-stream`. The stream mechanism
+  itself is covered directly in `test_events.py`.
+
+It's a unit/integration net around the gateway, not the full loop — still
+exercise the real Hermes→gateway→browser path (recorded in `ant` note
+`hap-Ed6UZ`) for anything touching the adapter or the browser.
 
 ## Local Development
 

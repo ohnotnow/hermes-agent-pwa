@@ -259,6 +259,8 @@ uv sync
 Run the gateway with `uv run uvicorn app.main:app --reload` and open
 http://127.0.0.1:8088.
 
+Run the test suite with `uv run pytest`.
+
 ## Licence
 
 Released under the MIT Licence. See [LICENSE](LICENSE).
