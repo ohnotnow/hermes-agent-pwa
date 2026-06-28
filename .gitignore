@@ -16,3 +16,6 @@ hap_token.txt
 hap.db
 hap.db-wal
 hap.db-shm
+
+# Per-install plugin config holds the token — keep only hap.json.example tracked
+hermes_plugin/hap/hap.json

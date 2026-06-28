@@ -1,0 +1,21 @@
+name: hap
+label: Hap
+kind: platform
+version: 0.1.0
+description: >
+  Hermes Agent Proxy adapter. Bridges a Hermes agent to a self-hosted hap
+  gateway over plain HTTP: polls for user messages and POSTs replies back.
+author: hap
+optional_env:
+  - name: HAP_GATEWAY_URL
+    description: "Base URL of the hap gateway (e.g. http://127.0.0.1:8088)"
+    prompt: "hap gateway URL"
+    password: false
+  - name: HAP_GATEWAY_TOKEN
+    description: "Bearer token for the hap gateway"
+    prompt: "hap bearer token"
+    password: true
+  - name: HAP_AGENT_ID
+    description: "This agent's id on the hap gateway (e.g. betty)"
+    prompt: "hap agent id"
+    password: false

@@ -1,0 +1,6 @@
+{
+  "gateway_url": "http://127.0.0.1:8088",
+  "token": "REPLACE_WITH_YOUR_HAP_TOKEN",
+  "agent_id": "hermes",
+  "poll_seconds": 3
+}
