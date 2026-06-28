@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.ant/
+.ait/
+
+# hap local runtime (never commit the token or the sqlite db)
+hap_token.txt
+hap.db
+hap.db-wal
+hap.db-shm
