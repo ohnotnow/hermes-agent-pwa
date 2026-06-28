@@ -4,7 +4,7 @@ Talk to your local Hermes agents from your phone, like a simple messaging app.
 
 ![screenshot](screenshot.png)
 
-hap (Hermes Agent Proxy) is a small, self-hosted gateway for messaging your own
+hap (Hermes Agent PWA) is a small, self-hosted gateway for messaging your own
 [Hermes](https://hermes-agent.nousresearch.com/) agents from a phone, tablet or
 browser. You pick an agent, send a message, and the reply turns up in the same
 conversation, whether the agent answers in two seconds or two hours. It is
@@ -35,11 +35,6 @@ Hermes also has something it calls a gateway:
 
 The browser only ever names an agent by id, never a raw address, and the agent
 reaches the hap gateway with a bearer token.
-
-(Yes, the repository is still named `nats-agent-gw`. An early design used NATS
-as the message fabric, then I dropped it in favour of plain HTTP and SQLite,
-which turned out to be plenty for one person and a few agents. The name just
-never caught up.)
 
 ## Prerequisites
 
@@ -212,8 +207,8 @@ Each agent listed with `"online": true` has a live poll loop.
 Contributions are welcome. To get set up:
 
 ```
-git clone <repo-url>
-cd nats-agent-gw
+git clone https://github.com/ohnotnow/hermes-agent-pwa
+cd hermes-agent-pwa
 uv sync
 ```
 
