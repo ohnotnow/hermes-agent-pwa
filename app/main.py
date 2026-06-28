@@ -227,6 +227,18 @@ async def conversation_detail(conversation_id: str, request: Request) -> dict:
     return {"conversation": conv, "messages": store.get_thread(conn, conversation_id)}
 
 
+@app.delete(
+    "/api/conversations/{conversation_id}",
+    dependencies=[Depends(auth.require_session_or_bearer), Depends(auth.require_same_origin)],
+)
+async def delete_conversation(conversation_id: str, request: Request) -> dict:
+    conn = request.app.state.db
+    if not store.set_conversation_deleted(conn, conversation_id, True):
+        raise HTTPException(404, "conversation not found")
+    broadcaster.publish({"type": "deleted", "conversation_id": conversation_id})
+    return {"ok": True}
+
+
 # ── live updates (SSE) ───────────────────────────────────────────────────
 
 @app.get("/api/events", dependencies=[Depends(auth.require_session)])
@@ -282,5 +294,7 @@ async def agent_reply(payload: AgentReply, request: Request) -> dict:
         raise HTTPException(409, "agent does not match conversation")
     store.ensure_agent(conn, agent)
     mid = store.add_message(conn, payload.conversation_id, agent, "agent", payload.body, payload.message_id)
+    # A late reply to a hidden conversation resurfaces it (async-by-default).
+    store.set_conversation_deleted(conn, payload.conversation_id, False)
     _publish_message(payload.conversation_id, "agent", payload.body, mid)
     return {"message_id": mid}

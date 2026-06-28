@@ -123,7 +123,18 @@ function makeConvRow(c) {
   const top = el("div", "row");
   const agent = el("span", "agent", c.agent_id);
   if (agentsOnline[c.agent_id]) agent.prepend(onlineDot());
-  top.append(agent, el("span", "when", c.last_at ? fmtTime(c.last_at) : ""));
+
+  const right = el("span", "row-right");
+  right.append(el("span", "when", c.last_at ? fmtTime(c.last_at) : ""));
+  const del = el("button", "del", "✕");
+  del.title = "Delete conversation";
+  del.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (confirm("Delete this conversation?")) deleteConversation(c.id, row);
+  });
+  right.append(del);
+
+  top.append(agent, right);
 
   const preview = el(
     "div", "preview",
@@ -139,6 +150,11 @@ function onlineDot() {
   const d = el("span", "dot online-dot");
   d.title = "online";
   return d;
+}
+
+async function deleteConversation(id, rowEl) {
+  const r = await api("/api/conversations/" + encodeURIComponent(id), { method: "DELETE" }).catch(() => null);
+  if (r && r.ok) rowEl.remove();
 }
 
 $("#new-form").addEventListener("submit", async (e) => {
@@ -214,8 +230,6 @@ $("#send-form").addEventListener("submit", async (e) => {
     const r = await api("/api/conversations/" + encodeURIComponent(state.conversationId) + "/messages",
       { method: "POST", body: JSON.stringify({ body }) });
     if (!r.ok) throw new Error("send failed");
-    // The message echoes back over SSE (deduped by id). If the agent isn't
-    // connected, say so rather than leaving the user wondering.
     if (!agentsOnline[state.agentLabel]) {
       showNote(`${state.agentLabel} hasn’t connected recently — your message is queued and will deliver when it’s back.`);
     }
@@ -245,6 +259,8 @@ function startSSE() {
       else if (state.view === "list") loadList();
     } else if (m.type === "delivered") {
       if (state.view === "convo" && m.conversation_id === state.conversationId) markDelivered(m.message_ids || []);
+    } else if (m.type === "deleted") {
+      if (state.view === "list") loadList(); // keep other open browsers in sync
     }
   };
 }

@@ -121,3 +121,9 @@ input:focus { border-color: var(--accent); }
 /* Inline system note in a conversation (e.g. agent offline) */
 .note { align-self: center; max-width: 90%; text-align: center;
   color: var(--muted); font-size: .8rem; padding: .3rem .6rem; }
+
+/* Conversation row: timestamp + delete control on the right */
+.row-right { display: inline-flex; align-items: center; gap: .5rem; flex: 0 0 auto; }
+.del { background: none; border: 0; color: var(--muted); font-size: 1rem;
+  line-height: 1; padding: .15rem .4rem; cursor: pointer; border-radius: 6px; }
+.del:hover { color: #ff7a7a; background: rgba(255, 122, 122, .12); }

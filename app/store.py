@@ -49,6 +49,16 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: str) -> dict | N
     return dict(row) if row else None
 
 
+def set_conversation_deleted(conn: sqlite3.Connection, conversation_id: str, deleted: bool) -> bool:
+    """Soft-delete (hide) or un-hide a conversation. Returns True if it existed."""
+    value = _now() if deleted else None
+    cur = conn.execute(
+        "UPDATE conversations SET deleted_at = ? WHERE id = ?", (value, conversation_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def add_message(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -113,7 +123,7 @@ def list_agents(conn: sqlite3.Connection) -> list[dict]:
 
 
 def list_conversations(conn: sqlite3.Connection) -> list[dict]:
-    """Conversations with a last-message preview, newest activity first."""
+    """Non-deleted conversations with a last-message preview, newest activity first."""
     rows = conn.execute(
         """SELECT c.id, c.agent_id, c.title, c.created_at,
                   m.body   AS last_body,
@@ -125,6 +135,7 @@ def list_conversations(conn: sqlite3.Connection) -> list[dict]:
                WHERE conversation_id = c.id
                ORDER BY created_at DESC LIMIT 1
            )
+           WHERE c.deleted_at IS NULL
            ORDER BY COALESCE(m.created_at, c.created_at) DESC"""
     ).fetchall()
     return [dict(r) for r in rows]

@@ -6,6 +6,9 @@ Stdlib sqlite3 only, so no extra dependency.
 Delivery model (QUESTIONS #3 lean): each message has a primary-key message_id
 for dedupe, and user messages carry delivered_to_agent_at — NULL until the
 agent's adapter has polled and acked them. That is the durable inbox cursor.
+
+Conversations carry a nullable deleted_at — soft-delete so the list can hide
+old threads without losing history (and so a late agent reply can un-hide).
 """
 from __future__ import annotations
 
@@ -24,7 +27,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     id          TEXT PRIMARY KEY,
     agent_id    TEXT NOT NULL REFERENCES agents(id),
     title       TEXT,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -54,4 +58,8 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # Migrate DBs created before deleted_at existed.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+    if "deleted_at" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN deleted_at TEXT")
     conn.commit()
