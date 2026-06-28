@@ -19,6 +19,154 @@ function el(tag, className, text) {
   return node;
 }
 
+// ── markdown (agent messages) ──────────────────────────────────────────────
+// Renders a *safe subset* of Markdown by building DOM nodes — never assigning
+// innerHTML or an HTML string — so the no-markup-injection guarantee above
+// holds even though agent output isn't fully trusted (it can carry web/tool
+// text). Covers fenced code blocks, lists, headings, blockquotes, **bold**,
+// *italic*, `code` and [links](url). Link hrefs are scheme-checked. This is the
+// common ~90%, not full CommonMark; underscore emphasis is intentionally not
+// supported so snake_case identifiers aren't mangled.
+
+const INLINE = {
+  code: /`([^`]+)`/,
+  bold: /\*\*(?=\S)([^*]+?)\*\*/, // (?=\S): "2 * 3 * 4" must not become italic
+  italic: /\*(?=\S)([^*]+?)\*/,
+  // URL may contain one level of balanced parens, e.g. ...wiki/Foo_(bar)
+  link: /\[([^\]]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/,
+};
+
+function safeLink(label, url) {
+  if (/^(https?:|mailto:)/i.test(url)) {
+    const a = el("a", null, label);
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    return a;
+  }
+  return document.createTextNode(label); // unknown scheme — show the text only
+}
+
+function appendInline(parent, text) {
+  // Soft line breaks inside a block become <br> (chat-friendly, not strict CommonMark).
+  text.split("\n").forEach((part, i) => {
+    if (i > 0) parent.appendChild(document.createElement("br"));
+    if (part) parent.appendChild(document.createTextNode(part));
+  });
+}
+
+function renderInline(text, parent) {
+  while (text) {
+    let hit = null; // earliest match across the inline patterns wins
+    for (const [kind, re] of Object.entries(INLINE)) {
+      const m = re.exec(text);
+      if (m && (!hit || m.index < hit.m.index)) hit = { kind, m };
+    }
+    if (!hit) { appendInline(parent, text); return; }
+    const { kind, m } = hit;
+    if (m.index) appendInline(parent, text.slice(0, m.index));
+    if (kind === "code") {
+      parent.appendChild(el("code", null, m[1]));
+    } else if (kind === "link") {
+      parent.appendChild(safeLink(m[1], m[2]));
+    } else {
+      const node = el(kind === "bold" ? "strong" : "em");
+      renderInline(m[1], node); // recurse so nested emphasis still renders
+      parent.appendChild(node);
+    }
+    text = text.slice(m.index + m[0].length);
+  }
+}
+
+const BLANK = (l) => !l.trim();
+const FENCE = (l) => /^\s*```/.test(l);
+const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
+const QUOTE = /^\s*>\s?/;
+const UL = /^\s*[-*+]\s+/;
+const OL = /^\s*\d+\.\s+/;
+
+function renderMarkdown(text) {
+  const frag = document.createDocumentFragment();
+  const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (FENCE(line)) { // ``` fenced code block ```
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      i++; // consume the closing fence (or fall off the end)
+      const pre = el("pre");
+      pre.appendChild(el("code", null, buf.join("\n")));
+      frag.appendChild(pre);
+      continue;
+    }
+
+    if (BLANK(line)) { i++; continue; }
+
+    const h = line.match(HEADING);
+    if (h) {
+      const head = el("h" + h[1].length);
+      renderInline(h[2].trim(), head);
+      frag.appendChild(head);
+      i++;
+      continue;
+    }
+
+    if (QUOTE.test(line)) {
+      const buf = [];
+      while (i < lines.length && QUOTE.test(lines[i])) buf.push(lines[i++].replace(QUOTE, ""));
+      const bq = el("blockquote");
+      renderInline(buf.join("\n"), bq);
+      frag.appendChild(bq);
+      continue;
+    }
+
+    if (UL.test(line) || OL.test(line)) {
+      const ordered = OL.test(line) && !UL.test(line);
+      const marker = ordered ? OL : UL;
+      const list = el(ordered ? "ol" : "ul");
+      while (i < lines.length && marker.test(lines[i])) {
+        const li = el("li");
+        renderInline(lines[i++].replace(marker, ""), li);
+        list.appendChild(li);
+      }
+      frag.appendChild(list);
+      continue;
+    }
+
+    // Paragraph — gather consecutive "plain" lines until a blank or a block marker.
+    const buf = [];
+    while (
+      i < lines.length && !BLANK(lines[i]) && !FENCE(lines[i]) &&
+      !HEADING.test(lines[i]) && !QUOTE.test(lines[i]) &&
+      !UL.test(lines[i]) && !OL.test(lines[i])
+    ) {
+      buf.push(lines[i++]);
+    }
+    const p = el("p");
+    renderInline(buf.join("\n"), p);
+    frag.appendChild(p);
+  }
+  return frag;
+}
+
+// Flatten Markdown to plain text for the one-line conversation preview.
+function stripMarkdown(text) {
+  return String(text == null ? "" : text)
+    .replace(/```[\s\S]*?```/g, " ")          // fenced code blocks
+    .replace(/`([^`]+)`/g, "$1")              // inline code
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")       // headings
+    .replace(/^\s*>\s?/gm, "")                // blockquote markers
+    .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "")  // list markers
+    .replace(/\*\*(?=\S)([^*]+?)\*\*/g, "$1") // bold
+    .replace(/\*(?=\S)([^*]+?)\*/g, "$1")     // italic
+    .replace(/\[([^\]]+)\]\((?:[^()\s]+|\([^()\s]*\))+\)/g, "$1") // links → label
+    .replace(/\s+/g, " ")                     // collapse whitespace/newlines
+    .trim();
+}
+
 const state = {
   view: "login",
   conversationId: null,
@@ -60,9 +208,10 @@ $("#login-form").addEventListener("submit", async (e) => {
     await loadList();
     show("list");
   } else {
-    err.textContent = r && r.status === 429
-      ? "Too many attempts — locked out, wait a bit."
-      : "Incorrect PIN or token.";
+    if (!r) err.textContent = "Couldn’t reach the gateway — is it running?";
+    else if (r.status === 429) err.textContent = "Too many attempts — locked out, wait a bit.";
+    else if (r.status === 401) err.textContent = "Incorrect PIN or token.";
+    else err.textContent = `Login failed (HTTP ${r.status}).`;
     err.hidden = false;
   }
 });
@@ -136,9 +285,10 @@ function makeConvRow(c) {
 
   top.append(agent, right);
 
+  const stripped = c.last_body ? stripMarkdown(c.last_body) : "";
   const preview = el(
     "div", "preview",
-    (c.last_sender === "agent" ? "" : "You: ") + (c.last_body || "—"),
+    (c.last_sender === "agent" ? "" : "You: ") + (stripped || "—"),
   );
 
   row.append(top, preview);
@@ -192,7 +342,15 @@ function appendMessage(m) {
   if (m.message_id && state.rendered.has(m.message_id)) return;
   if (m.message_id) state.rendered.add(m.message_id);
   const box = $("#messages");
-  const bubble = el("div", "bubble " + (m.sender === "agent" ? "agent" : "user"), m.body);
+  const isAgent = m.sender === "agent";
+  const bubble = el("div", "bubble " + (isAgent ? "agent" : "user"));
+  if (isAgent) {
+    const md = el("div", "md");
+    md.appendChild(renderMarkdown(m.body));
+    bubble.appendChild(md);
+  } else {
+    bubble.appendChild(document.createTextNode(m.body == null ? "" : String(m.body)));
+  }
   if (m.created_at) bubble.appendChild(el("span", "meta", fmtTime(m.created_at)));
   if (m.sender === "user") {
     if (m.message_id) state.bubbles.set(m.message_id, bubble);

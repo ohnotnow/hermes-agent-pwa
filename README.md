@@ -182,6 +182,41 @@ comments at the top, they flag the few things to adjust: the paths, the user,
 and a mount dependency if the repo lives on a USB drive or NAS. Put Caddy or
 Tailscale in front for HTTPS, and set `HAP_COOKIE_SECURE=true` when you do.
 
+## Updating
+
+When a new version lands you do not need to work out whether it was the gateway,
+the plugin or the web app that changed. Run all of these from the repository
+directory, in order, and everything ends up current. This assumes the usual
+setup: both pieces running as services (see
+[Running as a service](#running-as-a-service)).
+
+```
+git pull                                     # fetch the new code
+./scripts/install.sh                         # re-sync deps, refresh the plugin
+sudo systemctl restart hap-gateway           # restart the hap gateway
+hermes gateway stop && hermes gateway start  # reload the plugin into Hermes
+```
+
+A few things worth knowing:
+
+- **Re-running the installer is safe.** It reuses your existing `hap_token.txt`
+  rather than making a new one, so your login token and PIN do not change. It
+  re-syncs the gateway's dependencies and copies the latest plugin into
+  `~/.hermes/plugins/hap`.
+- **You do need to restart both pieces.** The installer updates files but starts
+  nothing: the hap gateway only picks up new web-app and server code when it
+  restarts, and Hermes only loads the new plugin when its gateway restarts.
+- **More than one agent?** Re-run the installer once per profile, exactly as you
+  first set it up (`./scripts/install.sh --profile <name>`), then restart that
+  profile's gateway with `hermes -p <name> gateway stop` followed by
+  `hermes -p <name> gateway start`. The single hap gateway restart above already
+  covers them all.
+
+Then on your phone, **pull-to-refresh, or close and fully reopen the app**, so it
+fetches the new web app. It caches itself for offline use, so if you still see the
+old version, refresh once more. To confirm it all took: open the app, check your
+conversations are still there, and send yourself a test message.
+
 ## Checking a live box first
 
 Installing onto a machine that is already running Hermes? These read-only
