@@ -4,23 +4,40 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now hap-gateway
 #
-# Assumes the repo is at /opt/hap and ./scripts/install.sh has been run there
-# (so .venv exists and hap_token.txt is present in the WorkingDirectory).
+# ADJUST these to your box before enabling:
+#   - WorkingDirectory: where you cloned the repo (and where ./scripts/install.sh
+#     created .venv and hap_token.txt).
+#   - User / Group: the account that owns the repo. There need not be a dedicated
+#     "hap" user; your own login user is fine.
+#   - If the repo lives on a non-root mount (a USB drive, a NAS share), uncomment
+#     RequiresMountsFor so systemd waits for the mount at boot instead of racing
+#     it (the .venv and token live on that drive).
+#
+# This unit runs the hap gateway (the web app). The Hermes side, which hosts the
+# plugin and does the polling, has its own durable service — see the README.
+# `hermes gateway install` (per profile) is the right tool there, and it sets up
+# user-service linger for you.
 
 [Unit]
 Description=hap — Hermes Agent Proxy gateway
 After=network.target
+# Uncomment if the repo is on a non-root mount, e.g. a USB drive:
+#RequiresMountsFor=/mnt/usb
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/hap
-# Direct venv binary — no 'uv' needed at runtime (install.sh's `uv sync` made .venv).
-# The bearer token is read from hap_token.txt in WorkingDirectory.
-ExecStart=/opt/hap/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
-Restart=always
-RestartSec=5
 User=hap
 Group=hap
+# Direct venv binary — no uv needed at runtime (install.sh's `uv sync` made .venv).
+# The bearer token is read from hap_token.txt in WorkingDirectory.
+ExecStart=/opt/hap/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
+# Uncomment when serving over HTTPS (behind Caddy or Tailscale) so the session
+# cookie is marked Secure. Leave it commented for plain-http localhost/LAN, or
+# login will silently fail because a Secure cookie is never sent over http.
+#Environment=HAP_COOKIE_SECURE=true
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
