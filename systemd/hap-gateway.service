@@ -1,0 +1,26 @@
+# systemd unit for the hap gateway (Linux targets, e.g. a Raspberry Pi or VPS).
+#
+#   sudo cp systemd/hap-gateway.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hap-gateway
+#
+# Assumes the repo is at /opt/hap and ./scripts/install.sh has been run there
+# (so .venv exists and hap_token.txt is present in the WorkingDirectory).
+
+[Unit]
+Description=hap — Hermes Agent Proxy gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/hap
+# Direct venv binary — no 'uv' needed at runtime (install.sh's `uv sync` made .venv).
+# The bearer token is read from hap_token.txt in WorkingDirectory.
+ExecStart=/opt/hap/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
+Restart=always
+RestartSec=5
+User=hap
+Group=hap
+
+[Install]
+WantedBy=multi-user.target

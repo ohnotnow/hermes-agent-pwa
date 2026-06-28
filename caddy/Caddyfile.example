@@ -1,0 +1,13 @@
+# Public HTTPS entry point for the hap gateway.
+#
+# Caddy terminates TLS (auto-provisions a Let's Encrypt cert for your domain)
+# and reverse-proxies everything to the gateway on localhost. This covers the
+# browser, the SSE stream (/api/events) and the agent endpoints alike — Caddy
+# streams Server-Sent Events correctly by default, so live updates survive the
+# proxy.
+#
+# Replace agents.example.org with your domain, then:  caddy run --config Caddyfile
+
+agents.example.org {
+    reverse_proxy 127.0.0.1:8088
+}
