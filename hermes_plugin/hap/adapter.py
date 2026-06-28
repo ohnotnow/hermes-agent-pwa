@@ -121,7 +121,19 @@ class HapAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(e), retryable=True)
 
     async def send_typing(self, chat_id, metadata=None) -> None:
-        return None
+        # Hermes calls this on a ~2s cadence while the agent is processing a
+        # message; we relay each as an ephemeral "working" ping to the gateway.
+        # Best-effort: a failed typing ping must never disrupt the agent.
+        if not self._client:
+            return
+        try:
+            await self._client.post(
+                f"{self._base_url}/api/agent/typing",
+                headers=self._headers(),
+                json={"agent": self._agent_id, "conversation_id": chat_id},
+            )
+        except Exception as e:  # noqa: BLE001 — typing is cosmetic, never fatal
+            logger.debug("hap: send_typing failed: %s", e)
 
     async def get_chat_info(self, chat_id) -> Dict[str, Any]:
         return {"name": chat_id, "type": "dm"}

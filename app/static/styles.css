@@ -105,7 +105,7 @@ input:focus { border-color: var(--accent); }
 /* Rendered Markdown in agent bubbles — see renderMarkdown() in app.js */
 .bubble .md { white-space: normal; }
 .bubble .md p, .bubble .md ul, .bubble .md ol,
-.bubble .md pre, .bubble .md blockquote { margin: 0 0 .5em; }
+.bubble .md pre, .bubble .md blockquote, .bubble .md .md-table { margin: 0 0 .5em; }
 .bubble .md > :last-child { margin-bottom: 0; }
 .bubble .md h1, .bubble .md h2, .bubble .md h3,
 .bubble .md h4, .bubble .md h5, .bubble .md h6 {
@@ -127,6 +127,38 @@ input:focus { border-color: var(--accent); }
   padding: .1em .7em; border-left: 3px solid var(--line); color: var(--muted);
 }
 .bubble .md a { color: #9db4ff; }
+
+/* Tables (GitHub-flavoured) — scroll sideways rather than blow out the bubble */
+.bubble .md .md-table { overflow-x: auto; max-width: 100%; }
+.bubble .md table { border-collapse: collapse; font-size: .92em; }
+.bubble .md th, .bubble .md td {
+  border: 1px solid var(--line); padding: .3rem .5rem;
+  text-align: left; white-space: nowrap;
+}
+.bubble .md th { font-weight: 700; background: rgba(255, 255, 255, .05); }
+
+/* Typing indicator — animated dots while the agent is working */
+.bubble.typing { padding: .7rem .9rem; }
+.typing-dots { display: inline-flex; gap: .3rem; align-items: center; }
+.typing-dots span {
+  width: .5rem; height: .5rem; border-radius: 50%;
+  background: var(--muted); display: inline-block;
+  animation: typing-bounce 1.2s infinite ease-in-out both;
+}
+.typing-dots span:nth-child(2) { animation-delay: .15s; }
+.typing-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes typing-bounce {
+  0%, 70%, 100% { transform: translateY(0); opacity: .35; }
+  35% { transform: translateY(-.35rem); opacity: 1; }
+}
+@keyframes typing-fade {
+  0%, 70%, 100% { opacity: .35; }
+  35% { opacity: 1; }
+}
+/* Respect reduced-motion: fade instead of bounce */
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots span { animation-name: typing-fade; }
+}
 
 /* Connection banner */
 .conn-banner {

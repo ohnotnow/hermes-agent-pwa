@@ -85,9 +85,61 @@ const QUOTE = /^\s*>\s?/;
 const UL = /^\s*[-*+]\s+/;
 const OL = /^\s*\d+\.\s+/;
 
+// ── tables (GitHub-flavoured) ──────────────────────────────────────────────
+function splitRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
+}
+
+// A delimiter row is the table's second line: cells of dashes with optional
+// alignment colons, e.g. |---|:--:|---:|
+function isTableDelimiter(line) {
+  if (!line || !line.includes("-")) return false;
+  const cells = splitRow(line);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
+function cellAlign(c) {
+  const left = c.startsWith(":"), right = c.endsWith(":");
+  return left && right ? "center" : right ? "right" : left ? "left" : "";
+}
+
+function buildTable(headerCells, aligns, bodyRows) {
+  const table = el("table");
+  const htr = el("tr");
+  headerCells.forEach((cell, idx) => {
+    const th = el("th");
+    if (aligns[idx]) th.style.textAlign = aligns[idx];
+    renderInline(cell, th);
+    htr.appendChild(th);
+  });
+  const thead = el("thead");
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  for (const row of bodyRows) {
+    const tr = el("tr");
+    for (let idx = 0; idx < headerCells.length; idx++) { // pad/truncate to header width
+      const td = el("td");
+      if (aligns[idx]) td.style.textAlign = aligns[idx];
+      renderInline(row[idx] != null ? row[idx] : "", td);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  const wrap = el("div", "md-table"); // scroll container so wide tables don't blow out the bubble
+  wrap.appendChild(table);
+  return wrap;
+}
+
 function renderMarkdown(text) {
   const frag = document.createDocumentFragment();
   const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+  const startsTable = (idx) =>
+    idx + 1 < lines.length && lines[idx].includes("|") && isTableDelimiter(lines[idx + 1]);
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -136,12 +188,26 @@ function renderMarkdown(text) {
       continue;
     }
 
+    // Table: a header row followed by a delimiter row, e.g. | --- | :--: |
+    if (startsTable(i)) {
+      const headerCells = splitRow(line);
+      const aligns = splitRow(lines[i + 1]).map(cellAlign);
+      i += 2; // consume header + delimiter
+      const bodyRows = [];
+      while (i < lines.length && !BLANK(lines[i]) && !FENCE(lines[i]) && lines[i].includes("|")) {
+        bodyRows.push(splitRow(lines[i]));
+        i++;
+      }
+      frag.appendChild(buildTable(headerCells, aligns, bodyRows));
+      continue;
+    }
+
     // Paragraph — gather consecutive "plain" lines until a blank or a block marker.
     const buf = [];
     while (
       i < lines.length && !BLANK(lines[i]) && !FENCE(lines[i]) &&
       !HEADING.test(lines[i]) && !QUOTE.test(lines[i]) &&
-      !UL.test(lines[i]) && !OL.test(lines[i])
+      !UL.test(lines[i]) && !OL.test(lines[i]) && !startsTable(i)
     ) {
       buf.push(lines[i++]);
     }
@@ -160,6 +226,8 @@ function stripMarkdown(text) {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")       // headings
     .replace(/^\s*>\s?/gm, "")                // blockquote markers
     .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "")  // list markers
+    .replace(/^\s*[-|: ]+$/gm, " ")           // table delimiter rows / rules
+    .replace(/\|/g, " ")                      // table cell separators
     .replace(/\*\*(?=\S)([^*]+?)\*\*/g, "$1") // bold
     .replace(/\*(?=\S)([^*]+?)\*/g, "$1")     // italic
     .replace(/\[([^\]]+)\]\((?:[^()\s]+|\([^()\s]*\))+\)/g, "$1") // links → label
@@ -176,6 +244,8 @@ const state = {
 };
 let sse = null;
 let agentsOnline = {};
+let typingEl = null;     // animated "agent is working" indicator (or null)
+let typingTimer = null;  // auto-hide timer; pings stop ~2s after the agent finishes
 
 function show(view) {
   state.view = view;
@@ -327,6 +397,7 @@ async function openConvo(id, agentLabel) {
   state.agentLabel = agentLabel || "";
   state.rendered = new Set();
   state.bubbles = new Map();
+  hideTyping(); // any dots belonged to the previous conversation
   $("#convo-title").textContent = agentLabel || "";
   updateConvoStatus();
   $("#messages").replaceChildren();
@@ -343,6 +414,7 @@ function appendMessage(m) {
   if (m.message_id) state.rendered.add(m.message_id);
   const box = $("#messages");
   const isAgent = m.sender === "agent";
+  if (isAgent) hideTyping(); // the reply has landed — stop the dots
   const bubble = el("div", "bubble " + (isAgent ? "agent" : "user"));
   if (isAgent) {
     const md = el("div", "md");
@@ -357,6 +429,7 @@ function appendMessage(m) {
     if (m.delivered_to_agent_at) addTick(bubble);
   }
   box.appendChild(bubble);
+  if (typingEl) box.appendChild(typingEl); // keep the dots below any new message
   box.scrollTop = box.scrollHeight;
 }
 
@@ -376,6 +449,30 @@ function showNote(text) {
   const box = $("#messages");
   box.appendChild(el("div", "note", text));
   box.scrollTop = box.scrollHeight;
+}
+
+// ── typing indicator (agent is working) ───────────────────────────────────
+// Hermes pings the adapter's send_typing on a ~2s cadence while the agent
+// processes; the gateway relays each as a "typing" SSE event. We show animated
+// dots and auto-hide if the pings stop — the reply event clears them sooner.
+function showTyping() {
+  const box = $("#messages");
+  if (!typingEl) {
+    typingEl = el("div", "bubble agent typing");
+    const dots = el("div", "typing-dots");
+    dots.append(el("span"), el("span"), el("span"));
+    typingEl.appendChild(dots);
+  }
+  box.appendChild(typingEl); // (re)append so it stays pinned to the bottom
+  box.scrollTop = box.scrollHeight;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(hideTyping, 6000);
+}
+
+function hideTyping() {
+  clearTimeout(typingTimer);
+  typingTimer = null;
+  if (typingEl) { typingEl.remove(); typingEl = null; }
 }
 
 $("#send-form").addEventListener("submit", async (e) => {
@@ -399,6 +496,7 @@ $("#send-form").addEventListener("submit", async (e) => {
 
 $("#back-btn").addEventListener("click", async () => {
   state.conversationId = null;
+  hideTyping();
   await loadList();
   show("list");
 });
@@ -417,12 +515,14 @@ function startSSE() {
       else if (state.view === "list") loadList();
     } else if (m.type === "delivered") {
       if (state.view === "convo" && m.conversation_id === state.conversationId) markDelivered(m.message_ids || []);
+    } else if (m.type === "typing") {
+      if (state.view === "convo" && m.conversation_id === state.conversationId) showTyping();
     } else if (m.type === "deleted") {
       if (state.view === "list") loadList(); // keep other open browsers in sync
     }
   };
 }
-function stopSSE() { if (sse) { sse.close(); sse = null; } }
+function stopSSE() { if (sse) { sse.close(); sse = null; } hideTyping(); }
 
 // Keep presence fresh (agent online/offline flips as it stops polling).
 setInterval(() => { if (state.view !== "login") refreshAgents(); }, 10000);

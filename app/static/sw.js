@@ -1,7 +1,7 @@
 // hap service worker — caches the app shell for offline open.
 // Live data (/api/*, including the SSE stream) and non-GET requests are never
 // cached; they always go straight to the network.
-const CACHE = "hap-v5";
+const CACHE = "hap-v7";
 const SHELL = [
   "/",
   "/static/app.js",

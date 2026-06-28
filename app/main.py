@@ -131,6 +131,11 @@ class AgentReply(BaseModel):
     message_id: str | None = None
 
 
+class AgentTyping(BaseModel):
+    agent: str
+    conversation_id: str
+
+
 # ── health ───────────────────────────────────────────────────────────────
 
 @app.get("/healthz")
@@ -298,3 +303,13 @@ async def agent_reply(payload: AgentReply, request: Request) -> dict:
     store.set_conversation_deleted(conn, payload.conversation_id, False)
     _publish_message(payload.conversation_id, "agent", payload.body, mid)
     return {"message_id": mid}
+
+
+@app.post("/api/agent/typing", dependencies=[Depends(auth.require_bearer)])
+async def agent_typing(payload: AgentTyping) -> dict:
+    """Ephemeral 'agent is working' ping. Hermes calls the adapter's send_typing
+    on a ~2s cadence while the agent processes a message; we just broadcast it so
+    connected browsers can animate a typing indicator. Not stored — purely live."""
+    valid_agent(payload.agent)
+    broadcaster.publish({"type": "typing", "conversation_id": payload.conversation_id})
+    return {"ok": True}
