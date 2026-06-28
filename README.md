@@ -160,19 +160,20 @@ and the poll interval.
 There are two long-running pieces, and two ways to keep them up.
 
 The Hermes side matters most, because it does the polling. `hermes gateway run`
-and `hermes gateway restart` run in the **foreground** and take over your shell:
-start one from a throwaway shell and it dies when the shell exits, and it can
-quietly replace a gateway you already had running. For anything you want to
-keep, use Hermes's own service instead:
+runs in the **foreground** and takes over your shell: start one from a throwaway
+shell and it dies when the shell exits, and it can quietly replace a gateway you
+already had running. For anything you want to keep, install it as a service and
+use the service commands instead:
 
 ```
 hermes gateway install      # one-time; also enables linger, so it survives a reboot
 hermes gateway start
 hermes gateway stop
+hermes gateway restart      # the quick way to apply an update
 ```
 
 Add `-p <profile>` for an agent in a profile, for example
-`hermes -p <profile> gateway start`. And if Hermes was already running when you
+`hermes -p <profile> gateway restart`. And if Hermes was already running when you
 enabled the plugin, restart it: enabling alone only takes effect on the next
 session.
 
@@ -191,10 +192,10 @@ setup: both pieces running as services (see
 [Running as a service](#running-as-a-service)).
 
 ```
-git pull                                     # fetch the new code
-./scripts/install.sh                         # re-sync deps, refresh the plugin
-sudo systemctl restart hap-gateway           # restart the hap gateway
-hermes gateway stop && hermes gateway start  # reload the plugin into Hermes
+git pull                                # fetch the new code
+./scripts/install.sh                    # re-sync deps, refresh the plugin(s)
+sudo systemctl restart hap-gateway      # restart the hap gateway
+hermes gateway restart                  # reload the plugin into Hermes
 ```
 
 A few things worth knowing:
@@ -206,11 +207,11 @@ A few things worth knowing:
 - **You do need to restart both pieces.** The installer updates files but starts
   nothing: the hap gateway only picks up new web-app and server code when it
   restarts, and Hermes only loads the new plugin when its gateway restarts.
-- **More than one agent?** Re-run the installer once per profile, exactly as you
-  first set it up (`./scripts/install.sh --profile <name>`), then restart that
-  profile's gateway with `hermes -p <name> gateway stop` followed by
-  `hermes -p <name> gateway start`. The single hap gateway restart above already
-  covers them all.
+- **More than one agent?** Install them all in one run with a comma-separated
+  list — `./scripts/install.sh --profiles default,<name>,…`, where `default` is
+  the default agent. The installer then prints the exact restart command for each
+  agent (e.g. `hermes -p <name> gateway restart`); run those, plus the single
+  `sudo systemctl restart hap-gateway`, which covers every agent at once.
 
 Then on your phone, **pull-to-refresh, or close and fully reopen the app**, so it
 fetches the new web app. It caches itself for offline use, so if you still see the
