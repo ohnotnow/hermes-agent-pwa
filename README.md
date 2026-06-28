@@ -128,6 +128,7 @@ Then add the plugin, one profile or several at once:
 ```
 ./scripts/install.sh --profile <profile>
 ./scripts/install.sh --profiles default,<profile>,<other>   # several in one run
+./scripts/install.sh --all-profiles                         # all your agents at once
 ```
 
 That drops the plugin into `~/.hermes/profiles/<profile>/plugins/hap/`, writes a
