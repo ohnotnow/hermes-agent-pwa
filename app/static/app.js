@@ -312,6 +312,15 @@ function updateConvoStatus() {
   s.replaceChildren(el("span", "dot"), document.createTextNode(online ? "online" : "offline"));
 }
 
+// ── last-used agent (pre-selects the picker on the list view) ──
+const LAST_AGENT_KEY = "hap.lastAgent";
+function lastAgent() {
+  try { return localStorage.getItem(LAST_AGENT_KEY) || ""; } catch { return ""; }
+}
+function rememberAgent(id) {
+  try { localStorage.setItem(LAST_AGENT_KEY, id); } catch { /* private mode etc. */ }
+}
+
 // ── conversation list ──
 async function loadList() {
   const [conv, agents] = await Promise.all([
@@ -320,11 +329,21 @@ async function loadList() {
   ]);
   setAgents(agents);
 
-  $("#agent-options").replaceChildren(...agents.map((a) => {
+  const sel = $("#new-agent");
+  const remembered = lastAgent();
+  sel.replaceChildren(...agents.map((a) => {
     const o = document.createElement("option");
     o.value = a.id;
+    o.textContent = a.id;
+    o.selected = a.id === remembered;
     return o;
   }));
+  if (!agents.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "no agents yet";
+    sel.append(o);
+  }
 
   const list = $("#conversation-list");
   if (!conv.length) {
@@ -349,7 +368,7 @@ function makeConvRow(c) {
   del.title = "Delete conversation";
   del.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    if (confirm("Delete this conversation?")) deleteConversation(c.id, row);
+    deleteConversation(c.id, row);
   });
   right.append(del);
 
@@ -385,7 +404,7 @@ $("#new-form").addEventListener("submit", async (e) => {
   const r = await api("/api/conversations", { method: "POST", body: JSON.stringify({ agent, body }) }).catch(() => null);
   if (r && r.ok) {
     const d = await r.json();
-    $("#new-agent").value = "";
+    rememberAgent(agent);
     $("#new-body").value = "";
     openConvo(d.conversation_id, agent);
   }
@@ -395,6 +414,7 @@ $("#new-form").addEventListener("submit", async (e) => {
 async function openConvo(id, agentLabel) {
   state.conversationId = id;
   state.agentLabel = agentLabel || "";
+  if (agentLabel) rememberAgent(agentLabel);
   state.rendered = new Set();
   state.bubbles = new Map();
   hideTyping(); // any dots belonged to the previous conversation

@@ -1,6 +1,6 @@
 # Technical Overview
 
-Last updated: 2026-06-28
+Last updated: 2026-09-10
 
 > Orientation for programmers and agents working on hap. For *what it is* and
 > how to install/run it, see the [README](README.md). This file is the
@@ -227,8 +227,12 @@ stream sends a `: keepalive` comment every 15s.
   (`renderMarkdown`) builds DOM nodes for a safe subset (code, lists, headings,
   quotes, bold/italic, links with scheme-checked hrefs, GFM tables). Underscore
   emphasis is *deliberately unsupported* so `snake_case` isn't mangled.
+- **Agent picker** on the list view is a plain `<select>` filled from
+  `/api/agents` (every agent that has ever polled). The last agent you started or
+  opened a conversation with is kept in `localStorage` (`hap.lastAgent`) and
+  pre-selected next time. Deleting a conversation has no confirm step by choice.
 - **Service worker** caches the app shell for offline open; `/api/*`, SSE and
-  non-GET always go to the network. **Bump `CACHE` (currently `hap-v7`) in
+  non-GET always go to the network. **Bump `CACHE` (currently `hap-v8`) in
   `sw.js` whenever a shell asset changes**, or clients keep the stale version.
 
 ## Config (env, `app/config.py`)
