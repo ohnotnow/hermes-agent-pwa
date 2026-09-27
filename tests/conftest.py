@@ -15,6 +15,11 @@ import os
 os.environ["HAP_AUTH_TOKEN"] = "hap-test-token-0123456789abcdef"
 os.environ["HAP_DB_PATH"] = ":memory:"
 os.environ.pop("HAP_COOKIE_SECURE", None)  # default false → cookies work over test http
+# Most tests exercise the login machinery, so run with browser auth ON; the
+# default-off mode is covered via the ``browser_auth_off`` fixture.
+os.environ["HAP_BROWSER_AUTH"] = "true"
+
+import dataclasses  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -67,6 +72,13 @@ def auth_client(client):
     session-or-bearer endpoint; agent endpoints require the bearer anyway."""
     client.headers["Authorization"] = f"Bearer {TEST_TOKEN}"
     return client
+
+
+@pytest.fixture
+def browser_auth_off(monkeypatch):
+    """Run with HAP_BROWSER_AUTH off (the shipped default). Settings are read
+    through ``auth.settings`` at request time, so swapping it is enough."""
+    monkeypatch.setattr(auth, "settings", dataclasses.replace(auth.settings, browser_auth=False))
 
 
 @pytest.fixture

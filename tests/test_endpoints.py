@@ -25,7 +25,18 @@ def test_login_with_token_then_me(client):
     assert r.status_code == 200
     assert r.json() == {"ok": True}
     assert client.cookies.get(auth.SESSION_COOKIE)
-    assert client.get("/api/me").json() == {"authenticated": True}
+    assert client.get("/api/me").json() == {"authenticated": True, "browser_auth": True}
+
+
+def test_me_renews_an_existing_session_cookie(client):
+    client.post("/api/login", json={"secret": TOKEN})
+    assert auth.SESSION_COOKIE in client.get("/api/me").headers.get("set-cookie", "")
+
+
+def test_me_does_not_issue_a_cookie_without_a_session(client):
+    r = client.get("/api/me")
+    assert r.json()["authenticated"] is False
+    assert "set-cookie" not in r.headers
 
 
 def test_login_with_pin(client):
@@ -58,6 +69,25 @@ def test_login_rejects_cross_origin(client):
     r = client.post(
         "/api/login",
         json={"secret": TOKEN},
+        headers={"origin": "https://evil.example"},
+    )
+    assert r.status_code == 403
+
+
+# ── browser auth off (the default) ────────────────────────────────────────────
+
+def test_browser_auth_off_opens_browser_endpoints(client, browser_auth_off):
+    assert client.get("/api/me").json() == {"authenticated": True, "browser_auth": False}
+    assert client.get("/api/agents").status_code == 200
+    r = client.post("/api/conversations", json={"agent": "betty", "body": "hi"})
+    assert r.status_code == 200
+
+
+def test_browser_auth_off_still_guards_agents_and_cross_origin(client, browser_auth_off):
+    assert client.post("/api/agent/poll", json={"agent": "betty"}).status_code == 401
+    r = client.post(
+        "/api/conversations",
+        json={"agent": "betty", "body": "hi"},
         headers={"origin": "https://evil.example"},
     )
     assert r.status_code == 403

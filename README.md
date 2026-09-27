@@ -12,9 +12,17 @@ built for one person and a handful of agents. No third-party messaging
 platforms sit in the middle, there is no message broker, and nobody else is
 reading your threads.
 
+> **⚠️ Only run hap on a network you trust.** Out of the box the web app has no
+> login: anyone who can reach the gateway's URL can read your conversations and
+> send messages to your agents. That is deliberate, because hap is meant for a
+> home LAN or a private tailnet, and typing a token on your phone every few days
+> gets old fast. If you expose it anywhere else (a public domain via Caddy, a
+> shared network), set `HAP_BROWSER_AUTH=true` to turn the login back on. Better
+> still, don't expose it at all.
+
 ## What it does
 
-You open a private URL, log in, and chat with your agents. Each agent has its
+You open a private URL and chat with your agents. Each agent has its
 own conversations, and history sticks around, so a thread is still there when
 you reopen the app. New replies arrive live while the app is open (over
 Server-Sent Events) and are waiting for you when it is closed. If an agent is
@@ -56,8 +64,9 @@ these steps cover. Clone the repository, then from its directory:
 The installer:
 
 - syncs the gateway's dependencies with uv,
-- generates a bearer token (saved to `hap_token.txt`) and derives a six-digit
-  login PIN from it,
+- generates a bearer token (saved to `hap_token.txt`), which the plugin uses to
+  talk to the gateway, and derives a six-digit login PIN from it (only needed if
+  you turn on `HAP_BROWSER_AUTH`),
 - copies the plugin into `~/.hermes/plugins/hap`, writes its config, and enables
   it,
 - prints the URL to open, the token, and the PIN.
@@ -76,7 +85,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8088   # the hap gateway
 hermes gateway run                                         # Hermes + the plugin
 ```
 
-Open the printed URL and log in with either the full token or the short PIN. If
+Open the printed URL. (If you have set `HAP_BROWSER_AUTH=true`, log in with
+either the full token or the short PIN.) If
 Hermes was already running, you need to restart it to pick up the plugin (see
 [Running as a service](#running-as-a-service)).
 
@@ -99,7 +109,8 @@ Here are the options, easiest first:
   grants this already; and the serve config persists across reboots, so it is a
   one-time step, not something to run from a service.
 - Caddy, for a public domain with automatic HTTPS. See
-  [`caddy/Caddyfile.example`](caddy/Caddyfile.example).
+  [`caddy/Caddyfile.example`](caddy/Caddyfile.example). This puts hap on the
+  internet, so you must set `HAP_BROWSER_AUTH=true` (see the warning at the top).
 - Same LAN only. Re-run the installer with `--host 0.0.0.0` and use
   `http://<lan-ip>:8088`.
 
@@ -146,7 +157,12 @@ polling.
 The hap gateway reads a few environment variables, all optional:
 
 - `HAP_AUTH_TOKEN`: the shared bearer token. If unset, it is read from
-  `hap_token.txt` (or the file named by `HAP_TOKEN_FILE`).
+  `hap_token.txt` (or the file named by `HAP_TOKEN_FILE`). The plugin always
+  needs it, whatever `HAP_BROWSER_AUTH` says.
+- `HAP_BROWSER_AUTH`: set to `true` to make the web app ask for the token or PIN
+  before it shows anything. Default `false`: no login, for a trusted LAN only
+  (see the warning at the top). With it on, a login lasts a year and renews
+  every time you open the app, so a device you use regularly stays logged in.
 - `HAP_HOST` / `HAP_PORT`: bind address and port (default `127.0.0.1:8088`).
 - `HAP_COOKIE_SECURE`: set to `true` when serving over HTTPS (behind Caddy or
   Tailscale) so the session cookie is marked Secure. Leave it `false` for
@@ -208,9 +224,12 @@ hermes gateway restart                  # reload the plugin into Hermes
 A few things worth knowing:
 
 - **Re-running the installer is safe.** It reuses your existing `hap_token.txt`
-  rather than making a new one, so your login token and PIN do not change. It
+  rather than making a new one, so your token and PIN do not change. It
   re-syncs the gateway's dependencies and copies the latest plugin into
   `~/.hermes/plugins/hap`.
+- **Upgrading from a version with a login?** The web app is now open by
+  default. If you were relying on the login (for example behind a public
+  domain), set `HAP_BROWSER_AUTH=true` *before* restarting the gateway.
 - **You do need to restart both pieces.** The installer updates files but starts
   nothing: the hap gateway only picks up new web-app and server code when it
   restarts, and Hermes only loads the new plugin when its gateway restarts.

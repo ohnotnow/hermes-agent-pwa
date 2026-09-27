@@ -6,6 +6,10 @@ it, and we set a signed, HttpOnly session cookie. Agent endpoints keep using
 the raw bearer token; browser endpoints accept the session cookie (or the
 bearer, for curl/scripts).
 
+With HAP_BROWSER_AUTH off (the default) browser endpoints are open and only
+the agent endpoints need the bearer token. The session cookie slides: /api/me
+re-issues it, so a device that opens the app within a year stays logged in.
+
 PIN = token hashed to 6 decimal digits (see ant: a leaked PIN must not leak the
 token, so it's a hash, not a slice). 6 digits is brute-forceable, so the login
 route is rate-limited + locked out (PRD §12).
@@ -26,7 +30,7 @@ from app.config import load_settings
 settings = load_settings()
 
 SESSION_COOKIE = "hap_session"
-SESSION_MAX_AGE = 60 * 60 * 24 * 14  # 14 days
+SESSION_MAX_AGE = 60 * 60 * 24 * 365  # 1 year, renewed on each app open
 
 # HMAC key for the signed session cookie, derived from the bearer token so we
 # need no separate secret and it stays stable across restarts.
@@ -86,14 +90,20 @@ def _bearer_ok(request: Request) -> bool:
     return False
 
 
+def has_session(request: Request) -> bool:
+    return valid_session(request.cookies.get(SESSION_COOKIE))
+
+
 def is_authed(request: Request) -> bool:
-    return valid_session(request.cookies.get(SESSION_COOKIE)) or _bearer_ok(request)
+    if not settings.browser_auth:
+        return True
+    return has_session(request) or _bearer_ok(request)
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────
 
 def require_session(request: Request) -> None:
-    if not valid_session(request.cookies.get(SESSION_COOKIE)):
+    if settings.browser_auth and not has_session(request):
         raise HTTPException(401, "not authenticated")
 
 

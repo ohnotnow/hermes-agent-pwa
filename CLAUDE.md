@@ -44,8 +44,8 @@ uv run uvicorn app.main:app --reload             # gateway, dev (http://127.0.0.
 ./scripts/install.sh [--help]                    # token + plugin install (see README)
 ```
 
-Login needs a token — `install.sh` writes `hap_token.txt` and prints the PIN, or
-set `HAP_AUTH_TOKEN`.
+The plugin needs a token (`install.sh` writes `hap_token.txt`, or set
+`HAP_AUTH_TOKEN`). Browser login is off unless `HAP_BROWSER_AUTH=true`.
 
 ## House style
 

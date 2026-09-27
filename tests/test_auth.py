@@ -103,6 +103,13 @@ def test_require_session_or_bearer_accepts_either():
         auth.require_session_or_bearer(fake_request())
 
 
+def test_browser_guards_open_when_browser_auth_off(browser_auth_off):
+    auth.require_session(fake_request())  # no raise
+    auth.require_session_or_bearer(fake_request())
+    with pytest.raises(HTTPException):
+        auth.require_bearer(fake_request())  # agent side still locked
+
+
 # ── same-origin guard ──────────────────────────────────────────────────────────
 
 def test_same_origin_allows_missing_origin_and_match():

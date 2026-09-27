@@ -282,8 +282,10 @@ cat <<EOF
   hap is set up. Agents: ${AGENTS[*]}${DEFAULT_NOTE}${OMITTED_NOTE}${UNENROLLED_NOTE}
 
   Open it:      ${OPEN_URL}
-  Login token:  ${TOKEN}
-  Or short PIN: ${PIN}
+  No login by default (trusted LAN only; see the README warning).
+  If you set HAP_BROWSER_AUTH=true, log in with:
+    token:  ${TOKEN}
+    or PIN: ${PIN}
 EOF
 
 if [ "$FRESH" = true ]; then

@@ -7,8 +7,9 @@ Run: uvicorn app.main:app --host 127.0.0.1 --port 8088
 
 Auth model:
   - Agent endpoints (poll/reply): raw bearer token (the agent holds it).
-  - Browser endpoints: signed session cookie from /api/login (token or PIN),
-    or the bearer token (for curl/scripts). The browser never stores the token.
+  - Browser endpoints: open by default (trusted LAN). With HAP_BROWSER_AUTH=true,
+    a signed session cookie from /api/login (token or PIN), or the bearer token
+    (for curl/scripts). The browser never stores the token.
 """
 from __future__ import annotations
 
@@ -154,6 +155,11 @@ async def login(payload: Login, request: Request, response: Response) -> dict:
         auth.login_limiter.record_fail()
         raise HTTPException(401, "invalid secret")
     auth.login_limiter.record_success()
+    _set_session_cookie(response)
+    return {"ok": True}
+
+
+def _set_session_cookie(response: Response) -> None:
     response.set_cookie(
         auth.SESSION_COOKIE,
         auth.make_session(),
@@ -163,7 +169,6 @@ async def login(payload: Login, request: Request, response: Response) -> dict:
         samesite="lax",
         path="/",
     )
-    return {"ok": True}
 
 
 @app.post("/api/logout")
@@ -173,8 +178,12 @@ async def logout(response: Response) -> dict:
 
 
 @app.get("/api/me")
-async def me(request: Request) -> dict:
-    return {"authenticated": auth.is_authed(request)}
+async def me(request: Request, response: Response) -> dict:
+    # Sliding session: every app open re-issues the cookie, so a device in
+    # regular use never hits the expiry.
+    if auth.settings.browser_auth and auth.has_session(request):
+        _set_session_cookie(response)
+    return {"authenticated": auth.is_authed(request), "browser_auth": auth.settings.browser_auth}
 
 
 # ── user (phone) side ────────────────────────────────────────────────────

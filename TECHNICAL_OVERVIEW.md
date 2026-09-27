@@ -1,6 +1,6 @@
 # Technical Overview
 
-Last updated: 2026-09-10
+Last updated: 2026-09-27
 
 > Orientation for programmers and agents working on hap. For *what it is* and
 > how to install/run it, see the [README](README.md). This file is the
@@ -118,6 +118,13 @@ Key points:
 One shared bearer token is the master credential — the design assumes a single
 trusted human, so agents are *not* told apart by token, only by `agent_id`.
 
+**Browser auth is off by default** (`HAP_BROWSER_AUTH`, default `false`): hap is
+meant for a trusted LAN/tailnet, and re-entering the token on a phone was enough
+friction that the app went unused. When it's off, `is_authed`, `require_session`
+and `require_session_or_bearer` all pass unconditionally; `require_bearer`
+(agent endpoints) and `require_same_origin` (CSRF guard on writes, which matters
+*more* with no login) are unaffected. The table below describes auth **on**.
+
 | Caller            | Credential                                  | Dependency                  |
 |-------------------|---------------------------------------------|-----------------------------|
 | Agent (adapter)   | raw `Bearer <token>`                        | `require_bearer`            |
@@ -166,7 +173,9 @@ Two things this buys us:
   session cookie** (both are derived from it; the HMAC key moves too). Worth
   knowing before you regenerate.
 - The browser **never stores the token** — it logs in with token-or-PIN and
-  gets an HttpOnly cookie (14-day max-age).
+  gets an HttpOnly cookie (1-year max-age). The session **slides**: `/api/me`
+  (called on every app open) re-issues a fresh cookie when it sees a valid one,
+  so a device in regular use never expires.
 - 6 digits is brute-forceable, so login is rate-limited: 5 fails / 300s window →
   300s lockout (`LoginLimiter`, in-memory, per-process).
 - `require_same_origin` only fires when an `Origin` header is present (browsers
@@ -179,7 +188,7 @@ Browser side:
 | Method | Path                                        | Auth                  | Purpose                          |
 |--------|---------------------------------------------|-----------------------|----------------------------------|
 | POST   | `/api/login` `/api/logout`                  | same-origin / —       | set/clear session cookie         |
-| GET    | `/api/me`                                    | —                     | `{authenticated}`                |
+| GET    | `/api/me`                                    | —                     | `{authenticated, browser_auth}`; renews cookie |
 | GET    | `/api/agents`                                | session/bearer        | agents + computed `online`       |
 | GET    | `/api/conversations`                         | session/bearer        | non-deleted, newest-activity     |
 | POST   | `/api/conversations`                         | session/bearer + SO   | start a thread (first user msg)  |
@@ -222,6 +231,8 @@ stream sends a `: keepalive` comment every 15s.
 
 - No framework, no build. `app.js` is the whole client: login → conversation
   list → conversation view, driven by `/api/me` on load and the SSE stream.
+  With browser auth off, `/api/me` reports authenticated, so the login view is
+  skipped and the Log out button is hidden (`browser_auth: false`).
 - **XSS posture: nothing is ever assigned to `innerHTML`.** All text is rendered
   via `textContent` / `createElement`. The Markdown renderer for agent messages
   (`renderMarkdown`) builds DOM nodes for a safe subset (code, lists, headings,
@@ -232,14 +243,15 @@ stream sends a `: keepalive` comment every 15s.
   opened a conversation with is kept in `localStorage` (`hap.lastAgent`) and
   pre-selected next time. Deleting a conversation has no confirm step by choice.
 - **Service worker** caches the app shell for offline open; `/api/*`, SSE and
-  non-GET always go to the network. **Bump `CACHE` (currently `hap-v8`) in
+  non-GET always go to the network. **Bump `CACHE` (currently `hap-v9`) in
   `sw.js` whenever a shell asset changes**, or clients keep the stale version.
 
 ## Config (env, `app/config.py`)
 
 All optional. `HAP_AUTH_TOKEN` (else read from `hap_token.txt` /
 `HAP_TOKEN_FILE`), `HAP_HOST`/`HAP_PORT` (`127.0.0.1:8088`), `HAP_DB_PATH`
-(`hap.db`), `HAP_COOKIE_SECURE` (`false`).
+(`hap.db`), `HAP_COOKIE_SECURE` (`false`), `HAP_BROWSER_AUTH` (`false`: no
+browser login; must be `true` anywhere untrusted, e.g. behind a public Caddy).
 
 > ⚠️ `HAP_COOKIE_SECURE` trap, both directions: `true` over `http://localhost`
 > makes login *silently* fail (browser won't send a Secure cookie over http);
@@ -262,6 +274,7 @@ and `httpx` (the `dev` dependency-group — no new *runtime* deps). Layers:
   un-hide, deleted-filtering.
 - `test_events.py` — the `Broadcaster` fan-out directly (no HTTP).
 - `test_endpoints.py` — the HTTP surface: login/me/logout + lockout + cross-origin,
+  sliding-cookie renewal, browser-auth-off mode,
   auth-required 401s, the agent online flag, start/reply/detail, agent poll
   (deliver-once) and reply (incl. the 409 mismatch), delete + un-hide.
 
@@ -269,7 +282,10 @@ Two things shape the suite and are worth knowing before you touch it:
 
 - **Import-time config.** `auth.py` derives the PIN and the cookie-signing key,
   and `main.py` captures `db_path`, *at import*. So `tests/conftest.py` pins
-  `HAP_AUTH_TOKEN`/`HAP_DB_PATH` **before** importing any `app.*` module.
+  `HAP_AUTH_TOKEN`/`HAP_DB_PATH` **before** importing any `app.*` module. It
+  also sets `HAP_BROWSER_AUTH=true`, so most tests exercise the login path; the
+  shipped default (off) is tested via the `browser_auth_off` fixture, which
+  swaps `auth.settings` (both `auth.py` and `/api/me` read it at request time).
 - **No live SSE stream in the tests.** `broadcaster.publish` is monkeypatched to
   capture events into `client.published`, so endpoint tests assert *which* event
   fired without consuming the infinite `text/event-stream`. The stream mechanism
@@ -286,8 +302,8 @@ uv sync
 uv run uvicorn app.main:app --reload     # gateway at http://127.0.0.1:8088
 ```
 
-Login needs a token: `./scripts/install.sh` generates `hap_token.txt` (and prints
-the PIN), or set `HAP_AUTH_TOKEN`. The full two-process setup, profiles, and
+The plugin needs a token: `./scripts/install.sh` generates `hap_token.txt` (and
+prints the PIN, used only with `HAP_BROWSER_AUTH=true`), or set `HAP_AUTH_TOKEN`. The full two-process setup, profiles, and
 service install are covered in the README.
 
 ## Design Notes (the "why")

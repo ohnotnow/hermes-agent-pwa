@@ -261,6 +261,7 @@ function setConn(ok) {
 
 async function init() {
   const d = await api("/api/me").then((r) => r.json()).catch(() => ({}));
+  $("#logout-btn").hidden = !d.browser_auth; // nothing to log out of when auth is off
   if (d.authenticated) { startSSE(); await loadList(); show("list"); }
   else { show("login"); }
 }

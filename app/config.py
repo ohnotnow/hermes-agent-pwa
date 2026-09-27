@@ -18,6 +18,7 @@ class Settings:
     host: str
     port: int
     cookie_secure: bool
+    browser_auth: bool
 
 
 def _load_token() -> str:
@@ -43,4 +44,7 @@ def load_settings() -> Settings:
         # Production (behind Caddy/HTTPS) must set HAP_COOKIE_SECURE=true.
         # Default false so local http dev/testing works.
         cookie_secure=os.getenv("HAP_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"},
+        # Browser login is OFF by default: hap is meant for a trusted LAN. Agent
+        # endpoints always need the bearer token regardless.
+        browser_auth=os.getenv("HAP_BROWSER_AUTH", "false").lower() in {"1", "true", "yes"},
     )
