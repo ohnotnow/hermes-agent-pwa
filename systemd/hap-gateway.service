@@ -31,7 +31,14 @@ User=hap
 Group=hap
 # Direct venv binary — no uv needed at runtime (install.sh's `uv sync` made .venv).
 # The bearer token is read from hap_token.txt in WorkingDirectory.
-ExecStart=/opt/hap/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
+#
+# --timeout-graceful-shutdown: agents long-poll, so there is nearly always a
+# poll held open (up to 25s). Without this, uvicorn waits for it on every stop
+# and `systemctl restart` takes up to 25s. Cutting it off is harmless: the
+# plugin logs one "poll error" warning and reconnects a few seconds later.
+# Expect one "ERROR: Cancel 1 running task(s), timeout graceful shutdown
+# exceeded" line per restart: that is this, not a fault.
+ExecStart=/opt/hap/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088 --timeout-graceful-shutdown 3
 # Uncomment when serving over HTTPS (behind Caddy or Tailscale) so the session
 # cookie is marked Secure. Leave it commented for plain-http localhost/LAN, or
 # login will silently fail because a Secure cookie is never sent over http.
