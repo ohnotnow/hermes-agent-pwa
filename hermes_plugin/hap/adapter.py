@@ -10,7 +10,11 @@ Config (env first, then hap.json beside this file):
   HAP_GATEWAY_URL    e.g. http://127.0.0.1:8088
   HAP_GATEWAY_TOKEN  bearer token for the gateway
   HAP_AGENT_ID       this agent's id on the gateway (e.g. betty)
-  HAP_POLL_SECONDS   poll interval (default 3)
+  HAP_POLL_SECONDS   pause after an empty or failed poll (default 3)
+
+Polls are long-polls: the gateway holds each one for up to POLL_WAIT_SECONDS
+and answers as soon as a message arrives, so delivery is immediate while the
+request rate stays at roughly two a minute.
 """
 from __future__ import annotations
 
@@ -30,6 +34,9 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, SendResult
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILE = Path(__file__).with_name("hap.json")
+# How long we ask the gateway to hold an empty poll. Must stay under the HTTP
+# client timeout (30s) below.
+POLL_WAIT_SECONDS = 25
 
 
 def _load_cfg() -> dict:
@@ -147,17 +154,23 @@ class HapAdapter(BasePlatformAdapter):
                 r = await self._client.post(
                     f"{self._base_url}/api/agent/poll",
                     headers=self._headers(),
-                    json={"agent": self._agent_id},
+                    json={"agent": self._agent_id, "wait": POLL_WAIT_SECONDS},
                 )
                 if r.status_code == 200:
-                    for m in r.json().get("messages", []):
+                    messages = r.json().get("messages", [])
+                    for m in messages:
                         await self._dispatch(m)
+                    if messages:
+                        continue  # straight back in, in case more are queued
                 else:
                     logger.warning("hap: poll got %s: %s", r.status_code, r.text)
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 logger.warning("hap: poll error: %s", e)
+            # Pause after an empty or failed poll. With a current gateway an empty
+            # answer means the hold timed out; an older gateway answers at once,
+            # and this keeps us from spinning against it.
             await asyncio.sleep(self._poll_seconds)
 
     async def _dispatch(self, m: dict) -> None:
