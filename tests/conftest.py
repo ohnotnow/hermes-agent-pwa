@@ -57,6 +57,9 @@ def client(conn, monkeypatch):
     """
     main.app.state.db = conn
     auth.login_limiter.record_success()  # reset the singleton limiter
+    # In-memory presence and long-poll state are module singletons too.
+    monkeypatch.setattr(main, "_last_seen", {})
+    monkeypatch.setattr(main, "_poll_waiters", {})
 
     published: list[dict] = []
     monkeypatch.setattr(main.broadcaster, "publish", published.append)
@@ -87,8 +90,7 @@ def tick(monkeypatch):
     assert ordering (thread order, conversation list, poll order) are
     deterministic rather than relying on wall-clock microsecond resolution.
 
-    Not autouse: timestamps are far in the past, which would make every agent
-    look offline — tests of the online flag must use the real clock.
+    Not autouse: only tests that assert ordering need it.
     """
     from app import store
 

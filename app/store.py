@@ -19,15 +19,15 @@ def _new_id(prefix: str) -> str:
 
 
 def ensure_agent(conn: sqlite3.Connection, agent_id: str, display_name: str | None = None) -> None:
-    """Auto-register an agent on first contact; bump last_seen otherwise."""
-    now = _now()
+    """Auto-register an agent on first contact (and adopt a display name if
+    given). Presence is tracked in memory by the app, not here; the old
+    last_seen_at column is left unused."""
     conn.execute(
-        """INSERT INTO agents (id, display_name, created_at, last_seen_at)
-           VALUES (?, ?, ?, ?)
+        """INSERT INTO agents (id, display_name, created_at)
+           VALUES (?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
-               last_seen_at = excluded.last_seen_at,
                display_name = COALESCE(excluded.display_name, agents.display_name)""",
-        (agent_id, display_name, now, now),
+        (agent_id, display_name, _now()),
     )
     conn.commit()
 
@@ -117,7 +117,7 @@ def get_thread(conn: sqlite3.Connection, conversation_id: str) -> list[dict]:
 
 def list_agents(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        "SELECT id, display_name, created_at, last_seen_at FROM agents ORDER BY id"
+        "SELECT id, display_name, created_at FROM agents ORDER BY id"
     ).fetchall()
     return [dict(r) for r in rows]
 

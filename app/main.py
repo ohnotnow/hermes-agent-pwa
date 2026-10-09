@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -30,11 +31,33 @@ from app.config import VERSION, load_settings
 from app.events import Broadcaster
 
 AGENT_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
-# An agent is "online" if it has polled within this window (it polls ~every 3s).
-ONLINE_WINDOW_SECONDS = 15
+# An agent is "online" if it has polled within this window. Agents long-poll
+# (each poll is held for up to MAX_POLL_WAIT_SECONDS), so this must comfortably
+# exceed the hold plus the adapter's gap between polls.
+ONLINE_WINDOW_SECONDS = 60
+MAX_POLL_WAIT_SECONDS = 25
 
 settings = load_settings()
 broadcaster = Broadcaster()
+
+# Presence is in memory only: agent id -> time.monotonic() of its last contact.
+# Writing it to SQLite on every poll was a steady trickle of disk writes (SD-card
+# wear on a Pi) for a value that only drives the online dot.
+_last_seen: dict[str, float] = {}
+# Long-poll wakeups: agent id -> the Event its held poll is waiting on.
+_poll_waiters: dict[str, asyncio.Event] = {}
+
+
+class _SkipPollAccessLog(logging.Filter):
+    """Drop uvicorn's access-log line for agent polls. There is one per poll,
+    forever, per agent, which is pure noise in syslog."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        return not (isinstance(args, tuple) and len(args) > 2 and args[2] == "/api/agent/poll")
+
+
+logging.getLogger("uvicorn.access").addFilter(_SkipPollAccessLog())
 
 
 @asynccontextmanager
@@ -84,14 +107,24 @@ def valid_agent(agent_id: str) -> str:
     return agent_id
 
 
-def _agent_online(last_seen_at: str | None) -> bool:
-    if not last_seen_at:
-        return False
-    try:
-        seen = datetime.fromisoformat(last_seen_at)
-    except ValueError:
-        return False
-    return (datetime.now(timezone.utc) - seen).total_seconds() <= ONLINE_WINDOW_SECONDS
+def _mark_seen(conn, agent_id: str) -> None:
+    """Record agent contact in memory; touch the db only the first time we see
+    an agent in this process (auto-registers it so it appears in /api/agents)."""
+    if agent_id not in _last_seen:
+        store.ensure_agent(conn, agent_id)
+    _last_seen[agent_id] = time.monotonic()
+
+
+def _agent_online(agent_id: str) -> bool:
+    seen = _last_seen.get(agent_id)
+    return seen is not None and time.monotonic() - seen <= ONLINE_WINDOW_SECONDS
+
+
+def _wake_agent(agent_id: str) -> None:
+    """Release the agent's held poll, if any, so a new message goes out now."""
+    event = _poll_waiters.pop(agent_id, None)
+    if event:
+        event.set()
 
 
 def _publish_message(conversation_id: str, sender: str, body: str, message_id: str) -> None:
@@ -123,6 +156,9 @@ class UserReply(BaseModel):
 class AgentPoll(BaseModel):
     agent: str
     display_name: str | None = None
+    # Long-poll: if nothing is waiting, hold the request up to this many seconds
+    # (capped at MAX_POLL_WAIT_SECONDS). 0 answers immediately (older adapters).
+    wait: float = 0
 
 
 class AgentReply(BaseModel):
@@ -192,7 +228,7 @@ async def me(request: Request, response: Response) -> dict:
 async def agents(request: Request) -> dict:
     items = store.list_agents(request.app.state.db)
     for a in items:
-        a["online"] = _agent_online(a.get("last_seen_at"))
+        a["online"] = _agent_online(a["id"])
     return {"agents": items}
 
 
@@ -212,6 +248,7 @@ async def start_conversation(payload: StartConversation, request: Request) -> di
     cid = store.create_conversation(conn, agent)
     mid = store.add_message(conn, cid, agent, "user", payload.body)
     _publish_message(cid, "user", payload.body, mid)
+    _wake_agent(agent)
     return {"conversation_id": cid, "message_id": mid}
 
 
@@ -226,6 +263,7 @@ async def user_reply(conversation_id: str, payload: UserReply, request: Request)
         raise HTTPException(404, "conversation not found")
     mid = store.add_message(conn, conversation_id, conv["agent_id"], "user", payload.body)
     _publish_message(conversation_id, "user", payload.body, mid)
+    _wake_agent(conv["agent_id"])
     return {"conversation_id": conversation_id, "message_id": mid}
 
 
@@ -286,8 +324,26 @@ async def events_stream(request: Request) -> StreamingResponse:
 async def agent_poll(payload: AgentPoll, request: Request) -> dict:
     conn = request.app.state.db
     agent = valid_agent(payload.agent)
-    store.ensure_agent(conn, agent, payload.display_name)  # auto-register on first contact
+    if payload.display_name:
+        store.ensure_agent(conn, agent, payload.display_name)
+    _mark_seen(conn, agent)
     msgs = store.poll_undelivered(conn, agent)
+    wait = min(max(payload.wait, 0), MAX_POLL_WAIT_SECONDS)
+    if not msgs and wait:
+        # No await between the check above and registering here, so a message
+        # can't slip in unnoticed: it either was already in the db, or its
+        # handler will find this Event and set it.
+        event = asyncio.Event()
+        _poll_waiters[agent] = event
+        try:
+            await asyncio.wait_for(event.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            if _poll_waiters.get(agent) is event:
+                del _poll_waiters[agent]
+        _mark_seen(conn, agent)
+        msgs = store.poll_undelivered(conn, agent)
     # Let connected browsers tick "delivered" once their messages reach the agent.
     by_conv: dict[str, list[str]] = {}
     for m in msgs:
@@ -306,7 +362,7 @@ async def agent_reply(payload: AgentReply, request: Request) -> dict:
         raise HTTPException(404, "conversation not found")
     if conv["agent_id"] != agent:
         raise HTTPException(409, "agent does not match conversation")
-    store.ensure_agent(conn, agent)
+    _mark_seen(conn, agent)
     mid = store.add_message(conn, payload.conversation_id, agent, "agent", payload.body, payload.message_id)
     # A late reply to a hidden conversation resurfaces it (async-by-default).
     store.set_conversation_deleted(conn, payload.conversation_id, False)

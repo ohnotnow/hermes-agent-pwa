@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id            TEXT PRIMARY KEY,
     display_name  TEXT,
     created_at    TEXT NOT NULL,
-    last_seen_at  TEXT
+    last_seen_at  TEXT  -- unused: presence is now in memory (app.main._last_seen)
 );
 
 CREATE TABLE IF NOT EXISTS conversations (

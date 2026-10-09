@@ -5,7 +5,13 @@ publish is captured per test) rather than by consuming the live stream.
 """
 from __future__ import annotations
 
-from app import auth, store
+import asyncio
+import logging
+
+import httpx
+import pytest
+
+from app import auth, main, store
 
 TOKEN = auth.settings.auth_token
 
@@ -111,19 +117,28 @@ def test_events_stream_needs_a_session_not_just_bearer(client):
 # ── agents online flag ───────────────────────────────────────────────────────
 
 def test_agents_online_flag(auth_client, conn):
-    # Polling registers betty and bumps last_seen → online.
+    # Polling registers betty and marks her seen → online.
     assert auth_client.post("/api/agent/poll", json={"agent": "betty"}).status_code == 200
-    # alfred exists but was last seen long ago → offline.
+    # alfred is registered but has not polled since the gateway started → offline.
     store.ensure_agent(conn, "alfred")
-    conn.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
-        ("2000-01-01T00:00:00+00:00", "alfred"),
-    )
-    conn.commit()
 
     agents = {a["id"]: a for a in auth_client.get("/api/agents").json()["agents"]}
     assert agents["betty"]["online"] is True
     assert agents["alfred"]["online"] is False
+    assert "last_seen_at" not in agents["betty"]
+
+    # betty goes quiet for longer than the window → offline.
+    main._last_seen["betty"] -= main.ONLINE_WINDOW_SECONDS + 1
+    agents = {a["id"]: a for a in auth_client.get("/api/agents").json()["agents"]}
+    assert agents["betty"]["online"] is False
+
+
+def test_poll_does_not_write_to_db_after_first_contact(auth_client, conn):
+    auth_client.post("/api/agent/poll", json={"agent": "betty"})
+    before = conn.total_changes
+    for _ in range(3):
+        auth_client.post("/api/agent/poll", json={"agent": "betty"})
+    assert conn.total_changes == before
 
 
 # ── conversation lifecycle ───────────────────────────────────────────────────
@@ -242,3 +257,62 @@ def test_delete_broadcasts_and_agent_reply_unhides(auth_client):
 
 def test_delete_unknown_conversation_404(auth_client):
     assert auth_client.delete("/api/conversations/conv_missing").status_code == 404
+
+
+# ── long-poll ───────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def _async_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app),
+        base_url="http://testserver",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+
+@pytest.mark.anyio
+async def test_held_poll_wakes_when_a_message_arrives(auth_client):
+    async with _async_client() as ac:
+        poll = asyncio.create_task(ac.post("/api/agent/poll", json={"agent": "betty", "wait": 10}))
+        await asyncio.sleep(0.2)
+        assert not poll.done()  # nothing waiting, so the gateway is holding it
+
+        await ac.post("/api/conversations", json={"agent": "betty", "body": "hello"})
+        r = await asyncio.wait_for(poll, timeout=2)  # well before the 10s hold
+    assert [m["body"] for m in r.json()["messages"]] == ["hello"]
+
+
+@pytest.mark.anyio
+async def test_held_poll_ignores_other_agents_messages(auth_client):
+    async with _async_client() as ac:
+        poll = asyncio.create_task(ac.post("/api/agent/poll", json={"agent": "betty", "wait": 0.5}))
+        await asyncio.sleep(0.1)
+        await ac.post("/api/conversations", json={"agent": "alfred", "body": "not for betty"})
+        r = await poll
+    assert r.json()["messages"] == []
+
+
+@pytest.mark.anyio
+async def test_held_poll_times_out_empty(auth_client):
+    async with _async_client() as ac:
+        r = await asyncio.wait_for(
+            ac.post("/api/agent/poll", json={"agent": "betty", "wait": 0.2}), timeout=2
+        )
+    assert r.json()["messages"] == []
+    assert main._poll_waiters == {}
+
+
+def test_poll_access_log_is_filtered():
+    def record(path):
+        return logging.LogRecord(
+            "uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+            ("127.0.0.1:1234", "POST", path, "1.1", 200), None,
+        )
+
+    f = main._SkipPollAccessLog()
+    assert f.filter(record("/api/agent/poll")) is False
+    assert f.filter(record("/api/agent/reply")) is True
