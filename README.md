@@ -176,7 +176,11 @@ The plugin reads `~/.hermes/plugins/hap/hap.json` (or the matching path inside a
 profile), which the installer writes. See
 [`hermes_plugin/hap/hap.json.example`](hermes_plugin/hap/hap.json.example) for
 the shape: the gateway URL it connects to, the bearer token, this agent's id,
-and the poll interval.
+and `poll_seconds`. The plugin long-polls: the gateway holds each poll open for
+up to 25 seconds and answers the moment you send something, so replies start
+straight away while an idle agent makes only a couple of requests a minute.
+`poll_seconds` (default 3) is just the pause after an empty or failed poll.
+Polls are also left out of the gateway's access log, so they don't fill syslog.
 
 ## Running as a service
 

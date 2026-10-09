@@ -1,6 +1,6 @@
 # Technical Overview
 
-Last updated: 2026-09-27
+Last updated: 2026-10-09
 
 > Orientation for programmers and agents working on hap. For *what it is* and
 > how to install/run it, see the [README](README.md). This file is the
@@ -36,7 +36,7 @@ HTTP contract and a bearer token:
   POST /api/login         ──────▶  sets signed session cookie
   POST /api/conversations ──────▶  store.add_message(sender='user')  ┐
   GET  /api/events  ◀── SSE ─────  Broadcaster (in-process fan-out)  │
-                                                                     │  POST /api/agent/poll  ◀── every ~3s ── HapAdapter._poll_loop
+                                                                     │  POST /api/agent/poll  ◀── long-poll ── HapAdapter._poll_loop
                                    store.poll_undelivered ───────────┘  returns undelivered user msgs ──▶ self.handle_message() → agent
                                                                         POST /api/agent/reply  ◀────────── adapter.send()
                                    store.add_message(sender='agent')
@@ -201,18 +201,32 @@ Agent side (bearer only):
 
 | Method | Path                | Purpose                                                          |
 |--------|---------------------|------------------------------------------------------------------|
-| POST   | `/api/agent/poll`   | auto-registers agent, returns + marks undelivered user msgs      |
+| POST   | `/api/agent/poll`   | long-poll: returns + marks undelivered user msgs (see below)     |
 | POST   | `/api/agent/reply`  | stores agent reply, un-hides thread, broadcasts                  |
 | POST   | `/api/agent/typing` | ephemeral "working" ping — broadcast only, never stored          |
 
 Plus `GET /healthz`, and `/`, `/sw.js`, `/manifest.json`, `/offline.html`.
 
-- **Agents auto-register on first contact** (`store.ensure_agent` in poll). There
-  is no separate registration step.
+`POST /api/agent/poll` takes `{"agent": "...", "wait": <seconds, optional>}`.
+
+- **Agents auto-register on first contact** (`store.ensure_agent`, called the
+  first time the process sees an agent). There is no separate registration step.
+- **Polls are long-polls.** The adapter sends `"wait": 25`; if nothing is
+  waiting, the gateway holds the request (capped at `MAX_POLL_WAIT_SECONDS`, 25s)
+  on a per-agent `asyncio.Event` in `_poll_waiters`, which `_wake_agent` sets
+  when a user message is stored for that agent. So delivery is immediate while
+  each agent makes roughly two requests a minute. A poll without `wait` (an
+  older adapter) answers at once, as before. The adapter pauses `poll_seconds`
+  (default 3) after an empty or failed poll and re-polls at once after a
+  non-empty one.
 - `agent_id` must match `^[a-z0-9_-]{1,32}$` (`valid_agent`) — enforced in routes
   *and* in the installer's name validation.
-- An agent is **`online` if it polled within `ONLINE_WINDOW_SECONDS` (15s)** —
-  derived from `last_seen_at`, not stored. Poll cadence is ~3s.
+- An agent is **`online` if it polled within `ONLINE_WINDOW_SECONDS` (60s)**,
+  tracked in memory (`_last_seen` in `main.py`), never written to SQLite: a
+  write per poll was steady SD-card wear for a value that only drives the online
+  dot. After a gateway restart every agent shows offline until its next poll
+  (a second or two). The `agents.last_seen_at` column is left in the schema,
+  unused, and is no longer returned by `/api/agents`.
 - `/api/agent/reply` 409s if the conversation's `agent_id` doesn't match the
   caller — agents can't reply into each other's threads.
 
@@ -226,6 +240,8 @@ stream sends a `: keepalive` comment every 15s.
 > ⚠️ **Single-worker only.** Because the broadcaster lives in process memory, a
 > multi-worker uvicorn deployment would silently drop events to clients on other
 > workers. v1 runs one worker; a multi-worker setup would need a shared bus.
+> The same goes for long-poll wakeups and presence (`_poll_waiters`,
+> `_last_seen`), which are in-process dicts too.
 
 ## Web App Notes (`app/static/`)
 
@@ -259,7 +275,18 @@ browser login; must be `true` anywhere untrusted, e.g. behind a public Caddy).
 > only when actually behind Caddy/Tailscale HTTPS.
 
 The plugin reads `hap.json` beside `adapter.py` (env vars override): `gateway_url`,
-`token`, `agent_id`, `poll_seconds`.
+`token`, `agent_id`, `poll_seconds` (the pause after an empty or failed poll,
+not the poll rate: polls are long-polls, see above).
+
+The gateway drops uvicorn's access-log line for `POST /api/agent/poll`
+(`_SkipPollAccessLog` in `main.py`); every other request is still logged. That
+line used to land in syslog every few seconds per agent.
+
+Because a poll is nearly always held open, uvicorn would wait up to 25s for it
+on every stop. `systemd/hap-gateway.service` passes `--timeout-graceful-shutdown
+3` to cut it off; the plugin logs one poll error and reconnects. Each restart
+therefore logs one `ERROR: Cancel 1 running task(s), timeout graceful shutdown
+exceeded`, which is expected.
 
 ## Testing
 
@@ -276,7 +303,9 @@ and `httpx` (the `dev` dependency-group — no new *runtime* deps). Layers:
 - `test_endpoints.py` — the HTTP surface: login/me/logout + lockout + cross-origin,
   sliding-cookie renewal, browser-auth-off mode,
   auth-required 401s, the agent online flag, start/reply/detail, agent poll
-  (deliver-once) and reply (incl. the 409 mismatch), delete + un-hide.
+  (deliver-once, no db write after first contact) and reply (incl. the 409
+  mismatch), delete + un-hide, long-poll hold/wake/timeout (async tests via
+  `httpx.ASGITransport` and anyio), and the poll access-log filter.
 
 Two things shape the suite and are worth knowing before you touch it:
 

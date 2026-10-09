@@ -62,8 +62,9 @@ The plugin needs a token (`install.sh` writes `hap_token.txt`, or set
   nothing until you re-run the installer and restart Hermes.
 - **`serve.py` is a throwaway**, not the production gateway. Production is
   `app.main:app`.
-- **Single uvicorn worker only.** The SSE broadcaster is in-process; multiple
-  workers would silently drop live events.
+- **Single uvicorn worker only.** The SSE broadcaster, long-poll wakeups and
+  agent presence are all in-process; multiple workers would silently drop live
+  events and leave agents' polls hanging.
 - **Bump `CACHE` in `app/static/sw.js`** whenever a shell asset changes, or
   clients keep serving the stale cached version.
 - **Never assign `innerHTML`** in the front end. All text (incl. the Markdown
